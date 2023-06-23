@@ -269,8 +269,8 @@ def writePost(request):
 
 
 def LoadPost(request):
-    if request.method == 'GET':  # 게시글 페이징 , 게시글 다수 조회
-        access_token = request.GET.get('access_token')
+    if request.method == 'POST':  # 게시글 페이징 , 게시글 다수 조회
+        access_token = request.POST.get('access_token')
         if not access_token:
             return JsonResponse({'error': 'You need an Access Token', 'success': False})
         if checkLength(access_token, 1000):
@@ -283,21 +283,18 @@ def LoadPost(request):
             MarshmallowUser = Marshmallow_User.objects.get(id=user_id)
         except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
             return JsonResponse({'error': f'{e}', 'success': False})
-        searchValue = request.GET.get('searchValue')
-        searchType = request.GET.get('searchType')
+        searchValue = request.POST.get('searchValue')
+        searchType = request.POST.get('searchType')
         if searchValue and searchType:
             if any(checkLength(var, 50) for var in [user_id, searchValue, searchType]):
                 return JsonResponse({'success': False})
             return search_posts(searchValue, searchType, user_id)
-        if searchValue and not searchType:
-            if any(checkLength(var, 50) for var in [user_id, searchValue]):
-                return JsonResponse({'success': False})
-            return search_posts(searchValue, searchType, user_id)
-        else:
+        elif not searchValue and not searchType:
             paginator = Paginator(article.objects.filter(created_by=user_id), 10)
-            page_number = int(request.GET.get('number'))
-            if not page_number:
-                page_number = 1
+            try:
+                page_number = int(request.POST.get('number'))
+            except:
+                page_number=1
             if page_number > 999999:
                 return JsonResponse({'error': False})
             page_obj = paginator.get_page(page_number)
@@ -307,22 +304,24 @@ def LoadPost(request):
             response_data = {
                 'count': len(posts),
                 'num_pages': page_number,
-                'posts': [{'idx': post.id, 'title': post.title,'content':post.content, 'id': post.id} for post in posts],
+                'posts': [{'idx': post.id, 'title': post.title,'content':post.content, 'hashtag':post.hashtag} for post in posts],
             }
             return JsonResponse(response_data)
     else:
         return JsonResponse({'error': 'Invalid request method', 'success': False})
 
 def search_posts(searchValue,searchType,userId):
-    if searchType == 'TITLE':
+    if searchType.lower() == 'title':
         articles = article.objects.filter(title__contains=searchValue,created_by=userId)
-    elif searchType == 'ID':
+    elif searchType.lower() == 'id':
         articles = article.objects.filter(id=searchValue,created_by=userId)
-    elif searchType == 'CONTENT':
+    elif searchType.lower() == 'content':
         articles = article.objects.filter(content__contains=searchValue,created_by=userId)
-    elif searchType == 'HASHTAG':
+    elif searchType.lower() == 'hashtag':
         articles = article.objects.filter(hashtag=searchValue,created_by=userId)
-    return JsonResponse({'result': f'{articles}'})
+    else:
+        articles = ""
+    return JsonResponse({'result': [{'idx': article.id, 'title': article.title, 'content':article.content, 'hashtag':article.hashtag} for article in articles]})
 
 
 
@@ -379,42 +378,41 @@ def deletePost(request, idx):
             return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         if idx > 999999:
             return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
-
-        board = article.objects.get(id=idx,created_by=id)
-        if board is None:
-            return JsonResponse({'error': 'Post does not exist.', 'success': False})
-        else:
+        try:
+            board = article.objects.get(id=idx,created_by=id)
             board.delete_board()
-            return JsonResponse({'Delete': True})
+            return JsonResponse({'success': True})
+        except Exception as e:
+            return JsonResponse({'error': 'Post does not exist.', 'success': False},status=400)
     else:
-        return JsonResponse({'error': 'Invalid request method', 'success': False})
+        return JsonResponse({'error': 'Invalid request method', 'success': False},status=405)
 
 
 
-def viewPost(request,idx):
-    access_token = request.GET.get('access_token') or request.POST.get('access_token')
-    if not access_token:
-        return JsonResponse({'error': 'You need Access Token', 'success': False})
-    if checkLength(access_token,1000):
-        return JsonResponse({'error': 'Invalid Token.', 'success': False})
-    if verify_token_signature(access_token):
-        return JsonResponse({'error': 'Invalid Token.', 'success': False})
-    try:
-        decoded_token = jwt.decode(access_token, secret_key, algorithms=['HS256'])
-        user_id = decoded_token.get('user_id')
-    except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
-        return JsonResponse({'error': f'{e}'})
-    if request.method == 'GET':  # 게시글 단일 조회
-        if idx > 99999 or checkLength(idx, 50):
+def viewPost(request,id):
+    if request.method == 'POST':  # 게시글 단일 조회
+        access_token = request.POST.get('access_token')
+        if not access_token:
+            return JsonResponse({'error': 'You need Access Token', 'success': False},status=400)
+        if checkLength(access_token, 1000):
+            return JsonResponse({'error': 'Invalid Token.', 'success': False},status=400)
+        if verify_token_signature(access_token):
+            return JsonResponse({'error': 'Invalid Token.', 'success': False},status=400)
+        try:
+            decoded_token = jwt.decode(access_token, secret_key, algorithms=['HS256'])
+            user_id = decoded_token.get('user_id')
+        except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
+            return JsonResponse({'error': f'{e}'})
+        if id > 99999:
             return JsonResponse({'success': False})
         try:
-            post = article.objects.get(id=idx, created_by=user_id)
-            return JsonResponse({'success': 'True', 'idx': f'{idx}', 'post': f'{post}', 'title': f'{post.title}',
-                                 'contents': f'{post.contents}', 'password': f'{post.password}'})
+            post = article.objects.get(id=id, created_by=user_id)
+            return JsonResponse({'success': 'True', 'idx': f'{post.id}', 'title': f'{post.title}',
+                                 'contents': f'{post.content}', 'hashtag': f'{post.hashtag}'})
         except article.DoesNotExist:
-            return JsonResponse({'error': 'Post does not exist'})
+            return JsonResponse({'error': 'Post does not exist','success': False},status=400)
     else:
-        return JsonResponse({'error': 'Invalid request method.'})
+        return JsonResponse({'error': 'Invalid request method.'},status=405)
 
 
 
@@ -607,7 +605,7 @@ def delete_uploaded_image(uuid):
     return True
 def flag(request):
     if request.method == 'POST':
-        return HttpResponse("Marshmallow{E3sT3R_3gg!}")
+        return HttpResponse("Marshmallow{Y0u_F1nD_M4rsHm4110w_Fl4G!_E3sT3R_3gg!}")
     else:
         return JsonResponse({'Status code': '404'})
 

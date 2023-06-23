@@ -41,12 +41,6 @@ class article(models.Model):
     @classmethod
     def create_board(cls, **kwargs):
         return cls.objects.create(**kwargs)
-    @classmethod
-    def get_board(cls, idx,id):
-        try:
-            return cls.objects.get(idx=idx,id=id)
-        except cls.DoesNotExist:
-            return None
     def delete_board(self):
         self.delete()
     @classmethod

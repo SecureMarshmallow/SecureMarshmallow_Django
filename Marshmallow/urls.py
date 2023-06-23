@@ -14,6 +14,7 @@ urlpatterns = [ #매핑 패턴
 
     path('api/articles', views.LoadPost),
     path('api/articles/form', views.writePost),
+    path('api/articles/<int:id>', views.viewPost),
     path('api/articles/<int:idx>/form', views.editPost),
     path('api/articles/<int:idx>/delete', views.deletePost),
 
