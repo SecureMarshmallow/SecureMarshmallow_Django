@@ -1,6 +1,5 @@
 import base64
 import json
-
 from django.core import serializers
 from django.utils import timezone
 import config
@@ -8,7 +7,7 @@ from Marshmallow.models import article
 from django.core.paginator import Paginator
 from config import settings
 from .models import Marshmallow_User
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseForbidden, FileResponse
 from rest_framework_simplejwt.tokens import RefreshToken
 import os
 import re
@@ -23,12 +22,21 @@ from django.conf import settings
 import jwt
 
 secret_key = config.settings.SECRET_KEY
+
+def hello(request):
+    if request.method == "GET":
+        return JsonResponse({'status': 'runserver'})
+    else:
+        return JsonResponse({'error': 'Invalid Method.'})
 def user_login(request):
     if request.method == 'POST':
-        id = request.POST.get('id')
-        password = request.POST.get('password')
-        if not id or not password:
-            return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
+        try:
+            data = json.loads(request.body)
+            id = data.get('id')
+            password = data.get('password')
+        except Exception as e:
+            return JsonResponse({'error':'Invalid Request.', 'success': False},status=400)
+
         if checkLength(id, 50) or checkLength(password,255):
             return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
         try:
@@ -60,9 +68,10 @@ def user_login(request):
 
 def user_logout(request):
     if request.method == 'POST':
-        refresh_token = request.POST.get('refresh_token')
-        if not refresh_token:
-            return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
+        try:
+            refresh_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(refresh_token, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
         if verify_token_signature(refresh_token):
@@ -130,9 +139,10 @@ def signup(request):
 
 def getAccessToken(request):
     if request.method == 'POST':
-        refresh_token_str = request.POST.get('refresh_token')
-        if not refresh_token_str:
-            return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
+        try:
+            refresh_token_str = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(refresh_token_str, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
         if verify_token_signature(refresh_token_str):
@@ -164,9 +174,10 @@ def generate_random_string(length):
 ResetMail = {}
 def send_verification_email(request):
     if request.method == 'POST':
-        access_token = request.POST.get('access_token')
-        if not access_token:
-            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
         if verify_token_signature(access_token):
@@ -237,20 +248,21 @@ def reset_password(request,token):
 
 
 def writePost(request):
-    access_token = request.POST.get('access_token')
-    if not access_token:
-        return JsonResponse({'error': 'You need an Access Token', 'success': False},status=400)
-    if checkLength(access_token,1000):
-        return JsonResponse({'error': 'Invalid Request.','success':False},status=400)
-    if verify_token_signature(access_token):
-        return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
-    try:
-        decoded_token = jwt.decode(access_token, secret_key, algorithms=['HS256'])
-        user_id = decoded_token.get('user_id')
-        MarshmallowUser = Marshmallow_User.objects.get(id=user_id)
-    except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
-        return JsonResponse({'error': f'{e}', 'success': False},status=400)
     if request.method == 'POST':  # 게시글 작성
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
+        if checkLength(access_token, 1000):
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
+        if verify_token_signature(access_token):
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
+        try:
+            decoded_token = jwt.decode(access_token, secret_key, algorithms=['HS256'])
+            user_id = decoded_token.get('user_id')
+            MarshmallowUser = Marshmallow_User.objects.get(id=user_id)
+        except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
+            return JsonResponse({'error': f'{e}', 'success': False}, status=400)
         content = request.POST.get('content')
         hashtag = request.POST.get('hashtag')
         title = request.POST.get('title')
@@ -270,9 +282,10 @@ def writePost(request):
 
 def LoadPost(request):
     if request.method == 'POST':  # 게시글 페이징 , 게시글 다수 조회
-        access_token = request.POST.get('access_token')
-        if not access_token:
-            return JsonResponse({'error': 'You need an Access Token', 'success': False})
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Token.', 'success': False})
         if verify_token_signature(access_token):
@@ -328,9 +341,10 @@ def search_posts(searchValue,searchType,userId):
 
 def editPost(request, idx):
     if request.method == 'POST':  # 게시글 수정
-        access_token = request.POST.get('access_token')
-        if not access_token:
-            return JsonResponse({'error': 'You need Access Token', 'success': False},status=400)
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
         if verify_token_signature(access_token):
@@ -363,8 +377,9 @@ def editPost(request, idx):
 
 def deletePost(request, idx):
     if request.method == 'POST':  # 게시글 삭제
-        access_token = request.POST.get('access_token')
-        if not access_token:
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
             return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
@@ -391,9 +406,10 @@ def deletePost(request, idx):
 
 def viewPost(request,id):
     if request.method == 'POST':  # 게시글 단일 조회
-        access_token = request.POST.get('access_token')
-        if not access_token:
-            return JsonResponse({'error': 'You need Access Token', 'success': False},status=400)
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Token.', 'success': False},status=400)
         if verify_token_signature(access_token):
@@ -435,9 +451,9 @@ def filename_filter(filename):
 
 
 def image_view(request, uuid):
-    request_body = json.loads(request.body)
-    access_token = request_body.get('access_token')
-    if not access_token:
+    try:
+        access_token = request.headers.get('Authorization').split(' ')[1]
+    except:
         return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
     if checkLength(access_token, 1000):
         return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
@@ -476,9 +492,10 @@ ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp','.heic']
 
 def image_load(request):
     if request.method == 'POST':
-        access_token = request.POST.get('access_token')
-        if not access_token:
-            return JsonResponse({'error': 'You need an Access Token', 'success': False}, status=400)
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         if verify_token_signature(access_token):
@@ -506,10 +523,11 @@ def image_load(request):
 
 def image_load_with_hashtag(request):
     if request.method == 'POST':
-        access_token = request.POST.get('access_token')
-        hashtag = request.POST.get('hashtag')
-        if not access_token:
-            return JsonResponse({'error': 'You need an Access Token', 'success': False}, status=400)
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+            hashtag = request.POST.get('hashtag')
+        except:
+            return JsonResponse({'error': 'You need Access Token or Hashtag', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         if checkLength(hashtag, 255) or not hashtag:
@@ -541,10 +559,11 @@ def image_load_with_hashtag(request):
 
 
 def image_upload(request):
-    access_token = request.POST.get('access_token')
     if request.method == 'POST':
-        if not access_token:
-            return JsonResponse({'error': 'You need an Access Token', 'success': False}, status=400)
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         if verify_token_signature(access_token):
@@ -603,17 +622,15 @@ def delete_uploaded_image(uuid):
     image_model.delete()
     image_data_model.delete()
     return True
+
+
 def flag(request):
     if request.method == 'POST':
-        return HttpResponse("Marshmallow{Y0u_F1nD_M4rsHm4110w_Fl4G!_E3sT3R_3gg!}")
+        return JsonResponse({'flag' : config.settings.SIMPLE_FLAG})
     else:
-        return JsonResponse({'Status code': '404'})
-
-
+        return JsonResponse({'error':'access denied.'})
 
 # 검증 코드
-
-
 
 def checkLength(kwarg, length):
     if len(kwarg) > length or len(kwarg) <= 0:
@@ -635,3 +652,4 @@ def verify_token_signature(token):
 
     except jwt.exceptions.DecodeError:
         return True
+
