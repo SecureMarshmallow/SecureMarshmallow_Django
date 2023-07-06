@@ -1,14 +1,6 @@
-import asyncio
-import base64
-import os
-from base64 import b64encode
 from datetime import timedelta
-from django.http import HttpResponseForbidden, request, JsonResponse
+from django.http import JsonResponse
 from django.utils import timezone
-from django.utils.deprecation import MiddlewareMixin
-from Cryptodome.Cipher import AES
-from base64 import b64encode, b64decode
-from django.http import HttpResponse
 from Marshmallow.models import RequestLog
 from config import settings
 
@@ -93,7 +85,15 @@ class RequestSizeLimitMiddleware:
         return self.get_response(request)
 
     def is_request_too_large(self, request):
-        content_length = int(request.META.get('CONTENT_LENGTH', 0))
+        content_length = request.META.get('CONTENT_LENGTH')
+        if content_length is None or content_length == '':
+            return False
+
+        try:
+            content_length = int(content_length)
+        except ValueError:
+            return False
+
         exception_urls = ['/api/file/upload']
         if (request.body is None or content_length > 10000) and request.path not in exception_urls:
             return True
