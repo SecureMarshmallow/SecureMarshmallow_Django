@@ -1,13 +1,12 @@
 import base64
 import json
-from django.core import serializers
 from django.utils import timezone
 import config
-from Marshmallow.models import article
+from Marshmallow.models import article, dormantAccount
 from django.core.paginator import Paginator
 from config import settings
 from .models import Marshmallow_User
-from django.http import HttpResponse, HttpResponseForbidden, FileResponse
+from django.http import HttpResponse
 from rest_framework_simplejwt.tokens import RefreshToken
 import os
 import re
@@ -20,7 +19,6 @@ from .models import image,imageData
 from django.core.mail import send_mail
 from django.conf import settings
 import jwt
-
 secret_key = config.settings.SECRET_KEY
 
 def hello(request):
@@ -30,12 +28,11 @@ def hello(request):
         return JsonResponse({'error': 'Invalid Method.'})
 def user_login(request):
     if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            id = data.get('id')
-            password = data.get('password')
-        except Exception as e:
-            return JsonResponse({'error':'Invalid Request.', 'success': False},status=400)
+        data = json.loads(request.body)
+        id = data.get('id')
+        password = data.get('password')
+        if id is None or password is None:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
 
         if checkLength(id, 50) or checkLength(password,255):
             return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
@@ -92,16 +89,17 @@ def user_logout(request):
 
 def signup(request):
     if request.method == 'POST':
-        username = request.POST.get('username')
-        password = request.POST.get('password')
-        id = request.POST.get('id')
-        email = request.POST.get('email')
-        if not username or not password or not id or not email:
-            return JsonResponse({'error':'Invalid Request.', 'success':False},status=400)
+        data = json.loads(request.body)
+        id = data.get('id')
+        password = data.get('password')
+        email = data.get('email')
+        username = data.get('nickname')
+        if username is None or id is None or password is None or email is None:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         if len(password) > 255:
             return JsonResponse({'error':'Password must be less than 255 digits.', 'success': False}, status=400)
         if len(password) < 10:
-            return JsonResponse({'error': 'IPassword must be more than 10 digits.', 'success': False}, status=400)
+            return JsonResponse({'error': 'Password must be more than 10 digits.', 'success': False}, status=400)
         if len(id) > 50:
             return JsonResponse({'error': 'ID must be less than 50 digits.', 'success': False}, status=400)
         if len(username) > 100:
@@ -133,9 +131,9 @@ def signup(request):
         decode_hash_password = hash_password.decode('utf-8')
         user = Marshmallow_User(name=username, password=decode_hash_password, email=email, id=id)
         user.save()
-        return JsonResponse({'success': True})
+        return JsonResponse({'success': True},status=200)
     else:
-        return JsonResponse({'error': 'Invalid request method', 'success': False},status=400)
+        return JsonResponse({'error': 'Invalid request method', 'success': False},status=405)
 
 def getAccessToken(request):
     if request.method == 'POST':
@@ -170,6 +168,25 @@ def generate_random_string(length):
     random_string = base64.urlsafe_b64encode(random_bytes).decode('utf-8')
     return random_string[:length]
 
+def profile(request):
+    if request.method == 'POST':
+        try:
+            access_token = request.headers.get('Authorization').split(' ')[1]
+        except:
+            return JsonResponse({'error': 'You need Access Token', 'success': False}, status=400)
+        if checkLength(access_token, 1000):
+            return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
+        if verify_token_signature(access_token):
+            return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
+        try:
+            decoded_token = jwt.decode(access_token, secret_key, algorithms=['HS256'])
+            id = decoded_token.get('user_id')
+            MarshmallowUser = Marshmallow_User.objects.get(id=id)
+        except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
+            return JsonResponse({'error': f'{e}', 'success': False},status=401)
+        return JsonResponse({'id':id, 'username':f'{MarshmallowUser.name}','email':f'{MarshmallowUser.email}'})
+    else:
+        return JsonResponse({'error': 'Invalid request method.', 'success': False},405)
 
 ResetMail = {}
 def send_verification_email(request):
@@ -226,9 +243,87 @@ def reset_password(request,token):
                 print(ResetMail)
                 return JsonResponse({'success': True, 'New Password': init_password})
             except:
-                return JsonResponse({'error': "Verify Failed.", 'success': False}, status=500)
+                return JsonResponse({'error': "Verify Failed.", 'success': False}, status=400)
         else:
-            return JsonResponse({'error': "Verify Failed.", 'success': False},status=500)
+            return JsonResponse({'error': "Verify Failed.", 'success': False},status=400)
+    else:
+        return JsonResponse({'error': "Invalid Method.", 'success': False},status=405)
+
+
+def delete_account(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        id = data.get('id')
+        password = data.get('password')
+        if id is None or password is None:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
+        try:
+            user = Marshmallow_User.objects.get(id=id)
+        except Marshmallow_User.DoesNotExist:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
+        stored_password = user.password.encode('utf-8')
+        input_password = password.encode('utf-8')
+        if bcrypt.checkpw(input_password, stored_password):
+            delete_user = dormantAccount(name=user.name, password=user.password, email=user.email, id=user.id)
+            delete_user.save()
+            image_all = image.objects.filter(created_by=id)
+            memo_all = article.objects.filter(created_by=id)
+            user.delete()
+            return JsonResponse({'success': True})
+        else:
+            return JsonResponse({'error': 'User password incorrect.', 'success': False}, status=400)
+    else:
+        return JsonResponse({'error': "Invalid Method.", 'success': False}, status=405)
+
+RecoverMail = {}
+def recover_account_send_mail(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        id = data.get('id')
+        password = data.get('password')
+        if id is None or password is None:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
+        try:
+            dormant_user = dormantAccount.objects.get(id=id)
+        except:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
+        stored_password = dormant_user.password.encode('utf-8')
+        input_password = password.encode('utf-8')
+        if bcrypt.checkpw(input_password, stored_password):
+            recover_token = generate_random_string(32)
+            verification_link = f"http://127.0.0.1:8000/api/recover-account/{recover_token}"
+            subject = 'Email Recover Verification'
+            message = f'Click the following link to recover your account: {verification_link}'
+            from_email = settings.EMAIL_HOST_USER
+            recipient_list = [dormant_user.email]
+            send_mail(subject=subject, message=message, from_email=from_email, recipient_list=recipient_list,
+                      fail_silently=False)
+            RecoverMail[f"{recover_token}"] = f"{id}"
+            print(ResetMail)
+            return JsonResponse({'success': True})
+        else:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
+
+    else:
+        return JsonResponse({'error': "Invalid Method.", 'success': False}, status=405)
+
+def recover_account(request,token):
+    if request.method == 'GET':
+        if RecoverMail[f'{token}']:
+            if checkLength(token,50):
+                return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
+            try:
+                userid = RecoverMail[f'{token}']
+                dormant_user = dormantAccount.objects.get(id=userid)
+                user = Marshmallow_User(id=dormant_user.id,name=dormant_user.name,password=dormant_user.password,email=dormant_user.email)
+                dormant_user.delete()
+                user.save()
+                del RecoverMail[f'{token}']
+                return JsonResponse({'success': True})
+            except:
+                return JsonResponse({'error': "Verify Failed.", 'success': False}, status=400)
+        else:
+            return JsonResponse({'error': "Verify Failed.", 'success': False},status=400)
     else:
         return JsonResponse({'error': "Invalid Method.", 'success': False},status=405)
 
@@ -236,8 +331,7 @@ def reset_password(request,token):
 
 
 
-
-    # 메모 CRUD
+ # 메모 CRUD
 
 
 
@@ -263,11 +357,12 @@ def writePost(request):
             MarshmallowUser = Marshmallow_User.objects.get(id=user_id)
         except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
             return JsonResponse({'error': f'{e}', 'success': False}, status=400)
-        content = request.POST.get('content')
-        hashtag = request.POST.get('hashtag')
-        title = request.POST.get('title')
-        if not content or not hashtag or not title:
-            return JsonResponse({'error': 'Invalid Request.', 'success':False},status=400)
+        data = json.loads(request.body)
+        content = data.get('content')
+        hashtag = data.get('hashtag')
+        title = data.get('title')
+        if content is None or hashtag is None or title is None:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         if checkLength(user_id, 50) or checkLength(title, 255) or checkLength(content, 10000) or checkLength(hashtag,255):
             return JsonResponse({'error': 'Invalid Request.','success':False},status=400)
         try:
@@ -296,30 +391,31 @@ def LoadPost(request):
             MarshmallowUser = Marshmallow_User.objects.get(id=user_id)
         except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
             return JsonResponse({'error': f'{e}', 'success': False})
-        searchValue = request.POST.get('searchValue')
-        searchType = request.POST.get('searchType')
+        data = json.loads(request.body)
+        searchValue = data.get('searchValue')
+        searchType = data.get('searchType')
         if searchValue and searchType:
             if any(checkLength(var, 50) for var in [user_id, searchValue, searchType]):
                 return JsonResponse({'success': False})
             return search_posts(searchValue, searchType, user_id)
-        elif not searchValue and not searchType:
-            paginator = Paginator(article.objects.filter(created_by=user_id), 10)
-            try:
-                page_number = int(request.POST.get('number'))
-            except:
-                page_number=1
-            if page_number > 999999:
-                return JsonResponse({'error': False})
-            page_obj = paginator.get_page(page_number)
-            posts = page_obj.object_list
-            if not posts:
-                return JsonResponse({'error': 'No posts', 'success': False, 'user': f'{user_id}'})
-            response_data = {
-                'count': len(posts),
-                'num_pages': page_number,
-                'posts': [{'idx': post.id, 'title': post.title,'content':post.content, 'hashtag':post.hashtag} for post in posts],
-            }
-            return JsonResponse(response_data)
+
+        paginator = Paginator(article.objects.filter(created_by=user_id), 10)
+        try:
+            page_number = int(request.POST.get('number'))
+        except:
+            page_number = 1
+        if page_number > 999999:
+            return JsonResponse({'error': False})
+        page_obj = paginator.get_page(page_number)
+        posts = page_obj.object_list
+        if posts is None:
+            return JsonResponse({'error': 'No posts', 'success': False, 'user': f'{user_id}'})
+        response_data = {
+            'count': len(posts),
+            'num_pages': page_number,
+            'posts': [{'idx': post.id, 'title': post.title, 'content': post.content, 'hashtag': post.hashtag} for post in posts],
+        }
+        return JsonResponse(response_data)
     else:
         return JsonResponse({'error': 'Invalid request method', 'success': False})
 
@@ -357,10 +453,11 @@ def editPost(request, idx):
             return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
         try:
             board = article.objects.get(id=idx, created_by=id)
-            title = request.POST.get('title')
-            contents = request.POST.get('contents')
-            hashtag = request.POST.get('hashtag')
-            if not title or not contents or not hashtag:
+            data = json.loads(request.body)
+            contents = data.get('content')
+            hashtag = data.get('hashtag')
+            title = data.get('title')
+            if contents is None or hashtag is None or title is None:
                 return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
             if checkLength(title, 255) or checkLength(contents, 10000):
                 return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
@@ -469,7 +566,7 @@ def image_view(request, uuid):
         try:
             if checkLength(uuid, 255):
                 return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
-            image_obj = imageData.objects.get(id=uuid)
+            image_obj = imageData.objects.filter(id=uuid,created_by=id)
             return HttpResponse(image_obj.data, content_type='image/jpeg')
         except ValueError as e:
             return JsonResponse({'error': str(e)}, status=400)
@@ -525,9 +622,12 @@ def image_load_with_hashtag(request):
     if request.method == 'POST':
         try:
             access_token = request.headers.get('Authorization').split(' ')[1]
-            hashtag = request.POST.get('hashtag')
         except:
             return JsonResponse({'error': 'You need Access Token or Hashtag', 'success': False}, status=400)
+        data = json.loads(request.body)
+        hashtag = data.get('hashtag')
+        if hashtag is None:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         if checkLength(access_token, 1000):
             return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         if checkLength(hashtag, 255) or not hashtag:
@@ -570,15 +670,16 @@ def image_upload(request):
             return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         try:
             decoded_token = jwt.decode(access_token, secret_key, algorithms=['HS256'])
-            created_by = decoded_token.get('user_id')
+            id = decoded_token.get('user_id')
+            MarshmallowUser = Marshmallow_User.objects.get(id=id)
         except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidTokenError) as e:
             return JsonResponse({'error': f'{e}', 'success': False}, status=400)
         Realimage = request.FILES.get('image', None)
-        Hashtag = request.FILES.get('hashtag', None)
+        data = json.loads(request.body)
+        Hashtag = data.get('hashtag')
+        if Hashtag is None or Realimage is None:
+            return JsonResponse({'error': 'Invalid Request.', 'success': False}, status=400)
         try:
-            if not Realimage:
-                return JsonResponse({'error': 'Invalid Request.', 'success': False},status=400)
-
             file_extension = os.path.splitext(Realimage.name)[1].lower()
             if file_extension not in ALLOWED_EXTENSIONS:
                 return JsonResponse({'error': 'Invalid file extension.', 'success': False},status=400)
@@ -597,7 +698,7 @@ def image_upload(request):
                 file_size=file_size,
                 create_at=datetime.datetime.now(),
                 is_deleted=False,
-                created_by=created_by,
+                created_by=id,
                 hashtag=Hashtag
             )
             file_entity.save()
