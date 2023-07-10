@@ -76,3 +76,15 @@ class imageData(models.Model):
         return str(self.id)
     def delete(self):
         self.delete()
+
+class RequestLog(models.Model):
+    user_ip = models.GenericIPAddressField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        ordering = ('-timestamp',)
+
+class dormantAccount(models.Model):
+    id = models.CharField(max_length=50, null=False, primary_key=True)
+    password = models.CharField(max_length=255, null=False)
+    name = models.CharField(max_length=100, null=False)
+    email = models.EmailField(max_length=320, null=False)
